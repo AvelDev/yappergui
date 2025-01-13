@@ -1,0 +1,4 @@
+yt-dlp>=2023.12.30
+faster-whisper>=0.10.0
+torch>=2.1.0
+tkinter
