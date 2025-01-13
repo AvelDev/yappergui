@@ -8,12 +8,17 @@ from faster_whisper import WhisperModel
 import threading
 import json
 import torch  # Do sprawdzania dostępności CUDA
+import shutil  # Do sprawdzania ffmpeg w PATH
+
+def find_ffmpeg():
+    """Find ffmpeg executable in system PATH"""
+    return shutil.which('ffmpeg')
 
 class SettingsWindow:
     def __init__(self, parent, settings, on_settings_change):
         self.window = tk.Toplevel(parent)
         self.window.title("Settings")
-        self.window.geometry("400x400")
+        self.window.geometry("400x450")  # Zwiększona wysokość dla nowego pola
         self.window.transient(parent)
         self.window.grab_set()
         
@@ -29,79 +34,63 @@ class SettingsWindow:
         ttk.Label(main_frame, text="Select Whisper Model:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.model_var = tk.StringVar(value=settings["model"])
         model_combo = ttk.Combobox(main_frame, textvariable=self.model_var, values=self.models, state="readonly")
-        model_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        
-        # Device selection
-        ttk.Label(main_frame, text="Processing Device:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.device_var = tk.StringVar(value=settings["device"])
-        
-        # Check CUDA availability
-        cuda_available = torch.cuda.is_available()
-        devices = ["cpu"]
-        if cuda_available:
-            devices.append("cuda")
-        
-        device_frame = ttk.Frame(main_frame)
-        device_frame.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5)
-        
-        for device in devices:
-            ttk.Radiobutton(
-                device_frame,
-                text=device.upper(),
-                variable=self.device_var,
-                value=device
-            ).pack(side=tk.LEFT, padx=5)
-        
-        if not cuda_available:
-            ttk.Label(
-                main_frame,
-                text="CUDA (GPU) is not available on this system",
-                foreground="red"
-            ).grid(row=2, column=0, columnspan=2, pady=5)
-        
-        # Compute type selection (only for CPU)
-        ttk.Label(main_frame, text="Compute Type:").grid(row=3, column=0, sticky=tk.W, pady=5)
-        self.compute_type_var = tk.StringVar(value=settings["compute_type"])
-        compute_types = ["float32", "float16", "int8"]
-        compute_type_combo = ttk.Combobox(
-            main_frame,
-            textvariable=self.compute_type_var,
-            values=compute_types,
-            state="readonly"
-        )
-        compute_type_combo.grid(row=3, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        
-        # Model info
-        self.info_text = tk.Text(main_frame, height=8, width=40, wrap=tk.WORD)
-        self.info_text.grid(row=4, column=0, columnspan=2, pady=10)
-        self.update_model_info(self.model_var.get())
-        
-        # Bind model change
-        model_combo.bind('<<ComboboxSelected>>', lambda e: self.update_model_info(self.model_var.get()))
-        
-        # Save button
-        ttk.Button(main_frame, text="Save", command=self.save_settings).grid(row=5, column=0, columnspan=2, pady=10)
+        model_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5)
 
-    def update_model_info(self, model):
-        model_info = {
-            "tiny": "Smallest model, fastest but least accurate\nSize: ~75MB",
-            "base": "Good balance for simple transcription\nSize: ~150MB",
-            "small": "Better accuracy than base\nSize: ~500MB",
-            "medium": "Good accuracy for most cases\nSize: ~1.5GB",
-            "large": "High accuracy\nSize: ~3GB",
-            "large-v2": "Best accuracy, newest version\nSize: ~3GB"
-        }
-        self.info_text.delete(1.0, tk.END)
-        self.info_text.insert(tk.END, model_info.get(model, ""))
+        # FFmpeg path
+        ttk.Label(main_frame, text="FFmpeg Path:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.ffmpeg_path_var = tk.StringVar(value=settings.get("ffmpeg_path", ""))
+        ffmpeg_entry = ttk.Entry(main_frame, textvariable=self.ffmpeg_path_var, width=30)
+        ffmpeg_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5)
+        
+        # Browse button for FFmpeg
+        browse_btn = ttk.Button(main_frame, text="Browse", command=self.browse_ffmpeg)
+        browse_btn.grid(row=1, column=2, padx=5, pady=5)
+        
+        # Auto-detect button for FFmpeg
+        detect_btn = ttk.Button(main_frame, text="Auto-detect", command=self.detect_ffmpeg)
+        detect_btn.grid(row=2, column=1, pady=5)
+
+        # Device selection
+        ttk.Label(main_frame, text="Select Device:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        self.device_var = tk.StringVar(value=settings["device"])
+        devices = ["cpu"]
+        if torch.cuda.is_available():
+            devices.append("cuda")
+        device_combo = ttk.Combobox(main_frame, textvariable=self.device_var, values=devices, state="readonly")
+        device_combo.grid(row=3, column=1, sticky=(tk.W, tk.E), pady=5)
+
+        # Buttons frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=4, column=0, columnspan=3, pady=20)
+
+        # Save and Cancel buttons
+        save_button = ttk.Button(button_frame, text="Save", command=self.save_settings)
+        save_button.pack(side=tk.LEFT, padx=5)
+        
+        cancel_button = ttk.Button(button_frame, text="Cancel", command=self.window.destroy)
+        cancel_button.pack(side=tk.LEFT, padx=5)
+
+    def browse_ffmpeg(self):
+        filename = filedialog.askopenfilename(
+            title="Select FFmpeg executable",
+            filetypes=[("Executable files", "*.exe"), ("All files", "*.*")]
+        )
+        if filename:
+            self.ffmpeg_path_var.set(filename)
+
+    def detect_ffmpeg(self):
+        ffmpeg_path = find_ffmpeg()
+        if ffmpeg_path:
+            self.ffmpeg_path_var.set(ffmpeg_path)
+            messagebox.showinfo("Success", f"FFmpeg found at: {ffmpeg_path}")
+        else:
+            messagebox.showerror("Error", "FFmpeg not found in system PATH")
 
     def save_settings(self):
-        new_settings = {
-            "model": self.model_var.get(),
-            "device": self.device_var.get(),
-            "compute_type": self.compute_type_var.get()
-        }
-        if new_settings != self.settings:
-            self.on_settings_change(new_settings)
+        self.settings["model"] = self.model_var.get()
+        self.settings["device"] = self.device_var.get()
+        self.settings["ffmpeg_path"] = self.ffmpeg_path_var.get()
+        self.on_settings_change(self.settings)
         self.window.destroy()
 
 class URLProcessorApp:
@@ -166,6 +155,13 @@ class URLProcessorApp:
         # Initialize whisper model
         self.load_model()
 
+        # Check for FFmpeg at startup
+        if not self.settings.get("ffmpeg_path"):
+            ffmpeg_path = find_ffmpeg()
+            if ffmpeg_path:
+                self.settings["ffmpeg_path"] = ffmpeg_path
+                self.save_settings()
+
     def create_menu(self):
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
@@ -181,21 +177,22 @@ class URLProcessorApp:
     def load_settings(self):
         default_settings = {
             "model": "base",
-            "device": "cpu",
-            "compute_type": "int8"
+            "device": "cuda" if torch.cuda.is_available() else "cpu",
+            "ffmpeg_path": ""
         }
-        if os.path.exists(self.settings_file):
-            try:
+        try:
+            if os.path.exists(self.settings_file):
                 with open(self.settings_file, 'r') as f:
                     settings = json.load(f)
-                    # Ensure all required settings exist
+                    # Update with any missing default settings
                     for key, value in default_settings.items():
                         if key not in settings:
                             settings[key] = value
                     return settings
-            except:
-                return default_settings
-        return default_settings
+            return default_settings
+        except Exception as e:
+            print(f"Error loading settings: {e}")
+            return default_settings
 
     def save_settings(self):
         with open(self.settings_file, 'w') as f:
@@ -250,49 +247,62 @@ class URLProcessorApp:
             self.update_progress("Download completed. Starting transcription...", 50)
 
     def process_url(self):
-        url = self.url_entry.get()
-        if url:
-            if url.startswith("https://www.youtube.com/watch?v="):
-                try:
-                    self.update_progress("Preparing to download audio...", 0)
-                    self.process_button.config(state='disabled')
-                    
-                    # Create a temporary directory for the audio file
-                    temp_dir = tempfile.mkdtemp()
-                    temp_file = os.path.join(temp_dir, 'audio')
-                    
-                    # Configure yt-dlp options
-                    ydl_opts = {
-                        'format': 'bestaudio/best',
-                        'outtmpl': temp_file,
-                        'ffmpeg_location': '/opt/homebrew/bin/ffmpeg',
-                        'progress_hooks': [self.download_progress_hook],
-                        'postprocessors': [{
-                            'key': 'FFmpegExtractAudio',
-                            'preferredcodec': 'mp3',
-                            'preferredquality': '192',
-                        }],
-                    }
+        url = self.url_entry.get().strip()
+        if not url:
+            messagebox.showerror("Error", "Please enter a URL")
+            return
 
-                    # Download audio
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        ydl.download([url])
-                    
-                    # Store the path to the temporary file (with mp3 extension)
-                    self.temp_audio_file = temp_file + '.mp3'
-                    
-                    # Start transcription in a separate thread
-                    threading.Thread(target=self.transcribe_audio, daemon=True).start()
-                
-                except Exception as e:
-                    messagebox.showerror("Error", f"Failed to download audio: {str(e)}")
-                    self.cleanup_temp_file()
-                    self.process_button.config(state='normal')
-                    self.update_progress("", 0)
-            else:
-                messagebox.showwarning("Warning", "Please enter a valid YouTube URL")
-        else:
-            messagebox.showwarning("Warning", "Please enter a URL")
+        # Check if FFmpeg is available
+        ffmpeg_path = self.settings.get("ffmpeg_path")
+        if not ffmpeg_path or not os.path.exists(ffmpeg_path):
+            ffmpeg_path = find_ffmpeg()
+            if not ffmpeg_path:
+                messagebox.showerror("Error", "FFmpeg not found. Please set FFmpeg path in settings.")
+                return
+            self.settings["ffmpeg_path"] = ffmpeg_path
+            self.save_settings()
+
+        self.process_button.config(state='disabled')
+        self.save_button.config(state='disabled')
+        self.result_text.delete(1.0, tk.END)
+        self.progress_var.set(0)
+        
+        try:
+            # Create a temporary directory for the audio file
+            temp_dir = tempfile.mkdtemp()
+            temp_file = os.path.join(temp_dir, 'audio')
+            
+            # Configure yt-dlp options
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'wav',
+                }],
+                'progress_hooks': [self.download_progress_hook],
+                'ffmpeg_location': ffmpeg_path,
+                'outtmpl': temp_file
+            }
+            
+            # Download audio
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+            
+            # Store the path to the temporary file (with wav extension)
+            self.temp_audio_file = temp_file + '.wav'
+            
+            # Verify the file exists
+            if not os.path.exists(self.temp_audio_file):
+                raise FileNotFoundError(f"Downloaded audio file not found at {self.temp_audio_file}")
+            
+            # Start transcription in a separate thread
+            threading.Thread(target=self.transcribe_audio, daemon=True).start()
+            
+        except Exception as e:
+            self.show_transcription_error(str(e))
+            self.cleanup_temp_file()
+            self.process_button.config(state='normal')
+            self.save_button.config(state='normal')
 
     def transcribe_audio(self):
         try:
@@ -302,14 +312,14 @@ class URLProcessorApp:
             self.update_progress("Transcribing audio... This might take a while...", 50)
             
             # Perform transcription in steps to show progress
-            # 1. Detect language (60%)
+            # 1. Detect language (60%))
             self.update_progress("Detecting language...", 60)
             segments, info = self.whisper_model.transcribe(
                 self.temp_audio_file,
                 beam_size=5
             )
             
-            # 2. Process segments (60-90%)
+            # 2. Process segments (60-90%))
             segments_list = list(segments)  # Convert generator to list
             total_segments = len(segments_list)
             processed_text = []
@@ -319,7 +329,7 @@ class URLProcessorApp:
                 self.update_progress(f"Processing segment {i+1}/{total_segments}...", progress)
                 processed_text.append(segment.text)
             
-            # 3. Combine results (90-100%)
+            # 3. Combine results (90-100%))
             self.update_progress("Finalizing transcription...", 90)
             text = " ".join(processed_text)
             
@@ -336,14 +346,17 @@ class URLProcessorApp:
         self.result_text.insert(tk.END, text)
         self.update_progress("Transcription completed!", 100)
         self.process_button.config(state='normal')
+        self.save_button.config(state='normal')
 
     def show_transcription_error(self, error_message):
         messagebox.showerror("Transcription Error", f"Failed to transcribe audio: {error_message}")
         self.update_progress("", 0)
         self.process_button.config(state='normal')
+        self.save_button.config(state='normal')
 
     def cleanup_after_transcription(self):
         self.process_button.config(state='normal')
+        self.save_button.config(state='normal')
 
     def save_to_file(self):
         result = self.result_text.get(1.0, tk.END).strip()
