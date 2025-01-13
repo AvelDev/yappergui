@@ -9,6 +9,7 @@ import threading
 import json
 import torch  # Do sprawdzania dostępności CUDA
 import shutil  # Do sprawdzania ffmpeg w PATH
+import time  # Do mierzenia czasu transkrypcji
 
 def find_ffmpeg():
     """Find ffmpeg executable in system PATH"""
@@ -115,6 +116,8 @@ class URLProcessorApp:
         self.temp_audio_file = None
         self.whisper_model = None
         self.lang_detect_model = None  # Model for quick language detection
+        self.transcription_start_time = None  # Do śledzenia czasu transkrypcji
+        self.timer_id = None  # Do przechowywania ID timera
         
         # Create models directory if it doesn't exist
         self.models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
@@ -145,6 +148,10 @@ class URLProcessorApp:
         # Progress Frame
         progress_frame = ttk.Frame(main_frame)
         progress_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        
+        # Timer Label
+        self.timer_label = ttk.Label(progress_frame, text="")
+        self.timer_label.pack(side=tk.TOP, fill=tk.X)
         
         # Progress Label
         self.progress_label = ttk.Label(progress_frame, text="")
@@ -255,6 +262,28 @@ class URLProcessorApp:
             print(f"Error loading whisper model: {str(e)}")
             self.update_progress(f"Error loading model: {str(e)}", 0)
 
+    def update_timer(self):
+        """Update the timer display"""
+        if self.transcription_start_time:
+            elapsed = time.time() - self.transcription_start_time
+            minutes = int(elapsed // 60)
+            seconds = int(elapsed % 60)
+            self.timer_label.config(text=f"Czas transkrypcji: {minutes:02d}:{seconds:02d}")
+            self.timer_id = self.root.after(1000, self.update_timer)
+
+    def start_timer(self):
+        """Start the transcription timer"""
+        self.transcription_start_time = time.time()
+        self.update_timer()
+
+    def stop_timer(self):
+        """Stop the transcription timer"""
+        if self.timer_id:
+            self.root.after_cancel(self.timer_id)
+            self.timer_id = None
+        # Keep the final time displayed instead of clearing it
+        # self.transcription_start_time = None
+
     def update_progress(self, message, progress=None):
         """Update progress bar and label"""
         self.progress_label.config(text=message)
@@ -334,6 +363,7 @@ class URLProcessorApp:
 
     def transcribe_audio(self):
         try:
+            self.start_timer()  # Start timer when transcription begins
             if not self.whisper_model or not self.lang_detect_model:
                 self.load_model()
             
@@ -401,8 +431,10 @@ class URLProcessorApp:
         self.save_button.config(state='normal')
 
     def cleanup_after_transcription(self):
-        self.process_button.config(state='normal')
-        self.save_button.config(state='normal')
+        self.stop_timer()  # Stop timer when transcription ends
+        self.cleanup_temp_file()
+        self.process_button.config(state=tk.NORMAL)
+        self.update_progress("", 0)
 
     def save_to_file(self):
         result = self.result_text.get(1.0, tk.END).strip()
