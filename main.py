@@ -7,18 +7,19 @@ import tempfile
 from faster_whisper import WhisperModel
 import threading
 import json
+import torch  # Do sprawdzania dostępności CUDA
 
 class SettingsWindow:
-    def __init__(self, parent, current_model, on_model_change):
+    def __init__(self, parent, settings, on_settings_change):
         self.window = tk.Toplevel(parent)
         self.window.title("Settings")
-        self.window.geometry("400x300")
+        self.window.geometry("400x400")
         self.window.transient(parent)
         self.window.grab_set()
         
         self.models = ["tiny", "base", "small", "medium", "large", "large-v2"]
-        self.current_model = current_model
-        self.on_model_change = on_model_change
+        self.settings = settings.copy()
+        self.on_settings_change = on_settings_change
         
         # Create main frame
         main_frame = ttk.Frame(self.window, padding="10")
@@ -26,20 +27,60 @@ class SettingsWindow:
         
         # Model selection
         ttk.Label(main_frame, text="Select Whisper Model:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.model_var = tk.StringVar(value=current_model)
+        self.model_var = tk.StringVar(value=settings["model"])
         model_combo = ttk.Combobox(main_frame, textvariable=self.model_var, values=self.models, state="readonly")
         model_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
         
+        # Device selection
+        ttk.Label(main_frame, text="Processing Device:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.device_var = tk.StringVar(value=settings["device"])
+        
+        # Check CUDA availability
+        cuda_available = torch.cuda.is_available()
+        devices = ["cpu"]
+        if cuda_available:
+            devices.append("cuda")
+        
+        device_frame = ttk.Frame(main_frame)
+        device_frame.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5)
+        
+        for device in devices:
+            ttk.Radiobutton(
+                device_frame,
+                text=device.upper(),
+                variable=self.device_var,
+                value=device
+            ).pack(side=tk.LEFT, padx=5)
+        
+        if not cuda_available:
+            ttk.Label(
+                main_frame,
+                text="CUDA (GPU) is not available on this system",
+                foreground="red"
+            ).grid(row=2, column=0, columnspan=2, pady=5)
+        
+        # Compute type selection (only for CPU)
+        ttk.Label(main_frame, text="Compute Type:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        self.compute_type_var = tk.StringVar(value=settings["compute_type"])
+        compute_types = ["float32", "float16", "int8"]
+        compute_type_combo = ttk.Combobox(
+            main_frame,
+            textvariable=self.compute_type_var,
+            values=compute_types,
+            state="readonly"
+        )
+        compute_type_combo.grid(row=3, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        
         # Model info
         self.info_text = tk.Text(main_frame, height=8, width=40, wrap=tk.WORD)
-        self.info_text.grid(row=1, column=0, columnspan=2, pady=10)
-        self.update_model_info(self.current_model)
+        self.info_text.grid(row=4, column=0, columnspan=2, pady=10)
+        self.update_model_info(self.model_var.get())
         
         # Bind model change
         model_combo.bind('<<ComboboxSelected>>', lambda e: self.update_model_info(self.model_var.get()))
         
         # Save button
-        ttk.Button(main_frame, text="Save", command=self.save_settings).grid(row=2, column=0, columnspan=2, pady=10)
+        ttk.Button(main_frame, text="Save", command=self.save_settings).grid(row=5, column=0, columnspan=2, pady=10)
 
     def update_model_info(self, model):
         model_info = {
@@ -54,9 +95,13 @@ class SettingsWindow:
         self.info_text.insert(tk.END, model_info.get(model, ""))
 
     def save_settings(self):
-        new_model = self.model_var.get()
-        if new_model != self.current_model:
-            self.on_model_change(new_model)
+        new_settings = {
+            "model": self.model_var.get(),
+            "device": self.device_var.get(),
+            "compute_type": self.compute_type_var.get()
+        }
+        if new_settings != self.settings:
+            self.on_settings_change(new_settings)
         self.window.destroy()
 
 class URLProcessorApp:
@@ -131,14 +176,23 @@ class URLProcessorApp:
         settings_menu.add_command(label="Model Settings", command=self.open_settings)
         
     def open_settings(self):
-        SettingsWindow(self.root, self.settings["model"], self.change_model)
+        SettingsWindow(self.root, self.settings, self.change_settings)
 
     def load_settings(self):
-        default_settings = {"model": "base"}
+        default_settings = {
+            "model": "base",
+            "device": "cpu",
+            "compute_type": "int8"
+        }
         if os.path.exists(self.settings_file):
             try:
                 with open(self.settings_file, 'r') as f:
-                    return json.load(f)
+                    settings = json.load(f)
+                    # Ensure all required settings exist
+                    for key, value in default_settings.items():
+                        if key not in settings:
+                            settings[key] = value
+                    return settings
             except:
                 return default_settings
         return default_settings
@@ -147,8 +201,8 @@ class URLProcessorApp:
         with open(self.settings_file, 'w') as f:
             json.dump(self.settings, f)
 
-    def change_model(self, new_model):
-        self.settings["model"] = new_model
+    def change_settings(self, new_settings):
+        self.settings.update(new_settings)
         self.save_settings()
         self.load_model()
 
@@ -163,11 +217,15 @@ class URLProcessorApp:
             
             self.whisper_model = WhisperModel(
                 self.settings["model"],
-                device="cpu",
-                compute_type="int8",
+                device=self.settings["device"],
+                compute_type=self.settings["compute_type"],
                 download_root=self.models_dir
             )
-            self.update_progress(f"Model {self.settings['model']} loaded successfully", 100)
+            self.update_progress(
+                f"Model {self.settings['model']} loaded successfully (Device: {self.settings['device'].upper()}, "
+                f"Compute: {self.settings['compute_type']})",
+                100
+            )
         except Exception as e:
             print(f"Error loading whisper model: {str(e)}")
             self.update_progress(f"Error loading model: {str(e)}", 0)
