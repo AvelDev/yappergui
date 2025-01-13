@@ -93,9 +93,23 @@ class URLProcessorApp:
         self.result_text = tk.Text(main_frame, height=10, width=60)
         self.result_text.grid(row=2, column=0, columnspan=3, padx=5, pady=5)
 
+        # Progress Frame
+        progress_frame = ttk.Frame(main_frame)
+        progress_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        
         # Progress Label
-        self.progress_label = ttk.Label(main_frame, text="")
-        self.progress_label.grid(row=3, column=0, columnspan=3)
+        self.progress_label = ttk.Label(progress_frame, text="")
+        self.progress_label.pack(side=tk.TOP, fill=tk.X)
+        
+        # Progress Bar
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(
+            progress_frame, 
+            variable=self.progress_var,
+            maximum=100,
+            mode='determinate'
+        )
+        self.progress_bar.pack(side=tk.TOP, fill=tk.X, padx=5)
 
         # Save Button
         self.save_button = ttk.Button(main_frame, text="Save to File", command=self.save_to_file)
@@ -140,25 +154,49 @@ class URLProcessorApp:
 
     def load_model(self):
         try:
-            self.progress_label.config(text=f"Loading {self.settings['model']} model...")
-            self.root.update()  # Force update the GUI
+            self.update_progress("Loading model...", 0)
+            
+            # Check if model exists locally
+            model_path = os.path.join(self.models_dir, self.settings['model'])
+            if not os.path.exists(model_path):
+                self.update_progress(f"Downloading {self.settings['model']} model... This might take a while.", 10)
+            
             self.whisper_model = WhisperModel(
                 self.settings["model"],
                 device="cpu",
                 compute_type="int8",
                 download_root=self.models_dir
             )
-            self.progress_label.config(text=f"Model {self.settings['model']} loaded successfully")
+            self.update_progress(f"Model {self.settings['model']} loaded successfully", 100)
         except Exception as e:
             print(f"Error loading whisper model: {str(e)}")
-            self.progress_label.config(text=f"Error loading model: {str(e)}")
+            self.update_progress(f"Error loading model: {str(e)}", 0)
+
+    def update_progress(self, message, progress=None):
+        """Update progress bar and label"""
+        self.progress_label.config(text=message)
+        if progress is not None:
+            self.progress_var.set(progress)
+        self.root.update()
+
+    def download_progress_hook(self, d):
+        """Progress hook for yt-dlp"""
+        if d['status'] == 'downloading':
+            # Calculate download progress
+            total_bytes = d.get('total_bytes')
+            downloaded_bytes = d.get('downloaded_bytes', 0)
+            if total_bytes:
+                progress = (downloaded_bytes / total_bytes) * 50  # Use first 50% for download
+                self.update_progress(f"Downloading audio... {progress:.1f}%", progress)
+        elif d['status'] == 'finished':
+            self.update_progress("Download completed. Starting transcription...", 50)
 
     def process_url(self):
         url = self.url_entry.get()
         if url:
             if url.startswith("https://www.youtube.com/watch?v="):
                 try:
-                    self.progress_label.config(text="Downloading audio...")
+                    self.update_progress("Preparing to download audio...", 0)
                     self.process_button.config(state='disabled')
                     
                     # Create a temporary directory for the audio file
@@ -169,7 +207,8 @@ class URLProcessorApp:
                     ydl_opts = {
                         'format': 'bestaudio/best',
                         'outtmpl': temp_file,
-                        'ffmpeg_location': '/opt/homebrew/bin/ffmpeg',  # Path to ffmpeg
+                        'ffmpeg_location': '/opt/homebrew/bin/ffmpeg',
+                        'progress_hooks': [self.download_progress_hook],
                         'postprocessors': [{
                             'key': 'FFmpegExtractAudio',
                             'preferredcodec': 'mp3',
@@ -191,7 +230,7 @@ class URLProcessorApp:
                     messagebox.showerror("Error", f"Failed to download audio: {str(e)}")
                     self.cleanup_temp_file()
                     self.process_button.config(state='normal')
-                    self.progress_label.config(text="")
+                    self.update_progress("", 0)
             else:
                 messagebox.showwarning("Warning", "Please enter a valid YouTube URL")
         else:
@@ -202,13 +241,29 @@ class URLProcessorApp:
             if not self.whisper_model:
                 self.load_model()
             
-            self.progress_label.config(text="Transcribing audio... This might take a while...")
+            self.update_progress("Transcribing audio... This might take a while...", 50)
             
-            # Perform transcription
-            segments, _ = self.whisper_model.transcribe(self.temp_audio_file, beam_size=5)
+            # Perform transcription in steps to show progress
+            # 1. Detect language (60%)
+            self.update_progress("Detecting language...", 60)
+            segments, info = self.whisper_model.transcribe(
+                self.temp_audio_file,
+                beam_size=5
+            )
             
-            # Combine all segments
-            text = " ".join([segment.text for segment in segments])
+            # 2. Process segments (60-90%)
+            segments_list = list(segments)  # Convert generator to list
+            total_segments = len(segments_list)
+            processed_text = []
+            
+            for i, segment in enumerate(segments_list):
+                progress = 60 + (i / total_segments) * 30
+                self.update_progress(f"Processing segment {i+1}/{total_segments}...", progress)
+                processed_text.append(segment.text)
+            
+            # 3. Combine results (90-100%)
+            self.update_progress("Finalizing transcription...", 90)
+            text = " ".join(processed_text)
             
             # Update GUI in the main thread
             self.root.after(0, self.update_transcription_result, text)
@@ -221,12 +276,12 @@ class URLProcessorApp:
     def update_transcription_result(self, text):
         self.result_text.delete(1.0, tk.END)
         self.result_text.insert(tk.END, text)
-        self.progress_label.config(text="Transcription completed!")
+        self.update_progress("Transcription completed!", 100)
         self.process_button.config(state='normal')
 
     def show_transcription_error(self, error_message):
         messagebox.showerror("Transcription Error", f"Failed to transcribe audio: {error_message}")
-        self.progress_label.config(text="")
+        self.update_progress("", 0)
         self.process_button.config(state='normal')
 
     def cleanup_after_transcription(self):
