@@ -18,7 +18,7 @@ class SettingsWindow:
     def __init__(self, parent, settings, on_settings_change):
         self.window = tk.Toplevel(parent)
         self.window.title("Settings")
-        self.window.geometry("400x450")  # Zwiększona wysokość dla nowego pola
+        self.window.geometry("400x500")  # Increased height for new option
         self.window.transient(parent)
         self.window.grab_set()
         
@@ -30,38 +30,51 @@ class SettingsWindow:
         main_frame = ttk.Frame(self.window, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
+        current_row = 0
+        
         # Model selection
-        ttk.Label(main_frame, text="Select Whisper Model:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        ttk.Label(main_frame, text="Select Whisper Model:").grid(row=current_row, column=0, sticky=tk.W, pady=5)
         self.model_var = tk.StringVar(value=settings["model"])
         model_combo = ttk.Combobox(main_frame, textvariable=self.model_var, values=self.models, state="readonly")
-        model_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5)
+        model_combo.grid(row=current_row, column=1, sticky=(tk.W, tk.E), pady=5)
+        current_row += 1
 
         # FFmpeg path
-        ttk.Label(main_frame, text="FFmpeg Path:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Label(main_frame, text="FFmpeg Path:").grid(row=current_row, column=0, sticky=tk.W, pady=5)
         self.ffmpeg_path_var = tk.StringVar(value=settings.get("ffmpeg_path", ""))
         ffmpeg_entry = ttk.Entry(main_frame, textvariable=self.ffmpeg_path_var, width=30)
-        ffmpeg_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5)
+        ffmpeg_entry.grid(row=current_row, column=1, sticky=(tk.W, tk.E), pady=5)
         
         # Browse button for FFmpeg
         browse_btn = ttk.Button(main_frame, text="Browse", command=self.browse_ffmpeg)
-        browse_btn.grid(row=1, column=2, padx=5, pady=5)
+        browse_btn.grid(row=current_row, column=2, padx=5, pady=5)
+        current_row += 1
         
         # Auto-detect button for FFmpeg
         detect_btn = ttk.Button(main_frame, text="Auto-detect", command=self.detect_ffmpeg)
-        detect_btn.grid(row=2, column=1, pady=5)
+        detect_btn.grid(row=current_row, column=1, pady=5)
+        current_row += 1
 
         # Device selection
-        ttk.Label(main_frame, text="Select Device:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        ttk.Label(main_frame, text="Select Device:").grid(row=current_row, column=0, sticky=tk.W, pady=5)
         self.device_var = tk.StringVar(value=settings["device"])
         devices = ["cpu"]
         if torch.cuda.is_available():
             devices.append("cuda")
         device_combo = ttk.Combobox(main_frame, textvariable=self.device_var, values=devices, state="readonly")
-        device_combo.grid(row=3, column=1, sticky=(tk.W, tk.E), pady=5)
+        device_combo.grid(row=current_row, column=1, sticky=(tk.W, tk.E), pady=5)
+        current_row += 1
+
+        # Timestamp option
+        ttk.Label(main_frame, text="Show Timestamps:").grid(row=current_row, column=0, sticky=tk.W, pady=5)
+        self.show_timestamps_var = tk.BooleanVar(value=settings.get("show_timestamps", True))
+        timestamp_check = ttk.Checkbutton(main_frame, variable=self.show_timestamps_var)
+        timestamp_check.grid(row=current_row, column=1, sticky=tk.W, pady=5)
+        current_row += 1
 
         # Buttons frame
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=4, column=0, columnspan=3, pady=20)
+        button_frame.grid(row=current_row, column=0, columnspan=3, pady=20)
 
         # Save and Cancel buttons
         save_button = ttk.Button(button_frame, text="Save", command=self.save_settings)
@@ -90,6 +103,7 @@ class SettingsWindow:
         self.settings["model"] = self.model_var.get()
         self.settings["device"] = self.device_var.get()
         self.settings["ffmpeg_path"] = self.ffmpeg_path_var.get()
+        self.settings["show_timestamps"] = self.show_timestamps_var.get()
         self.on_settings_change(self.settings)
         self.window.destroy()
 
@@ -100,6 +114,7 @@ class URLProcessorApp:
         self.root.geometry("600x400")
         self.temp_audio_file = None
         self.whisper_model = None
+        self.lang_detect_model = None  # Model for quick language detection
         
         # Create models directory if it doesn't exist
         self.models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
@@ -178,7 +193,8 @@ class URLProcessorApp:
         default_settings = {
             "model": "base",
             "device": "cuda" if torch.cuda.is_available() else "cpu",
-            "ffmpeg_path": ""
+            "ffmpeg_path": "",
+            "show_timestamps": True  # Default value for timestamp display
         }
         try:
             if os.path.exists(self.settings_file):
@@ -205,22 +221,34 @@ class URLProcessorApp:
 
     def load_model(self):
         try:
-            self.update_progress("Loading model...", 0)
+            self.update_progress("Loading models...", 0)
             
-            # Check if model exists locally
+            # Load tiny model for language detection first
+            if not self.lang_detect_model:
+                self.update_progress("Loading language detection model...", 10)
+                self.lang_detect_model = WhisperModel(
+                    "tiny",
+                    device=self.settings["device"],
+                    compute_type="int8",  # Using int8 for faster language detection
+                    download_root=self.models_dir
+                )
+            
+            # Check if main model exists locally
             model_path = os.path.join(self.models_dir, self.settings['model'])
             if not os.path.exists(model_path):
-                self.update_progress(f"Downloading {self.settings['model']} model... This might take a while.", 10)
+                self.update_progress(f"Downloading {self.settings['model']} model... This might take a while.", 20)
             
-            self.whisper_model = WhisperModel(
-                self.settings["model"],
-                device=self.settings["device"],
-                compute_type=self.settings["compute_type"],
-                download_root=self.models_dir
-            )
+            # Load main model for transcription
+            if not self.whisper_model:
+                self.whisper_model = WhisperModel(
+                    self.settings["model"],
+                    device=self.settings["device"],
+                    compute_type="int8",  # Using int8 for better performance
+                    download_root=self.models_dir
+                )
+            
             self.update_progress(
-                f"Model {self.settings['model']} loaded successfully (Device: {self.settings['device'].upper()}, "
-                f"Compute: {self.settings['compute_type']})",
+                f"Models loaded successfully (Device: {self.settings['device'].upper()})",
                 100
             )
         except Exception as e:
@@ -306,32 +334,50 @@ class URLProcessorApp:
 
     def transcribe_audio(self):
         try:
-            if not self.whisper_model:
+            if not self.whisper_model or not self.lang_detect_model:
                 self.load_model()
             
-            self.update_progress("Transcribing audio... This might take a while...", 50)
+            self.update_progress("Detecting language... This will be quick...", 50)
             
-            # Perform transcription in steps to show progress
-            # 1. Detect language (60%))
-            self.update_progress("Detecting language...", 60)
-            segments, info = self.whisper_model.transcribe(
+            # First detect language using tiny model
+            segments, info = self.lang_detect_model.transcribe(
                 self.temp_audio_file,
-                beam_size=5
+                beam_size=1,
+                language=None,
+                condition_on_previous_text=False,
+                vad_filter=True
             )
             
-            # 2. Process segments (60-90%))
-            segments_list = list(segments)  # Convert generator to list
+            detected_language = info.language
+            self.update_progress(f"Detected language: {detected_language}. Starting transcription...", 60)
+            
+            # Now transcribe with the main model using the detected language
+            segments, info = self.whisper_model.transcribe(
+                self.temp_audio_file,
+                beam_size=5,
+                language=detected_language,
+                condition_on_previous_text=True,
+                vad_filter=True
+            )
+            
+            # Process segments
+            segments_list = list(segments)
             total_segments = len(segments_list)
             processed_text = []
             
             for i, segment in enumerate(segments_list):
-                progress = 60 + (i / total_segments) * 30
+                progress = 70 + (i / total_segments) * 20
                 self.update_progress(f"Processing segment {i+1}/{total_segments}...", progress)
-                processed_text.append(segment.text)
+                
+                # Format text based on settings
+                if self.settings.get("show_timestamps", True):
+                    processed_text.append(f"[{segment.start:.1f}s -> {segment.end:.1f}s] {segment.text}")
+                else:
+                    processed_text.append(segment.text)
             
-            # 3. Combine results (90-100%))
+            # Combine results
             self.update_progress("Finalizing transcription...", 90)
-            text = " ".join(processed_text)
+            text = "\n".join(processed_text) if self.settings.get("show_timestamps", True) else " ".join(processed_text)
             
             # Update GUI in the main thread
             self.root.after(0, self.update_transcription_result, text)
