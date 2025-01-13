@@ -6,6 +6,58 @@ import os
 import tempfile
 from faster_whisper import WhisperModel
 import threading
+import json
+
+class SettingsWindow:
+    def __init__(self, parent, current_model, on_model_change):
+        self.window = tk.Toplevel(parent)
+        self.window.title("Settings")
+        self.window.geometry("400x300")
+        self.window.transient(parent)
+        self.window.grab_set()
+        
+        self.models = ["tiny", "base", "small", "medium", "large", "large-v2"]
+        self.current_model = current_model
+        self.on_model_change = on_model_change
+        
+        # Create main frame
+        main_frame = ttk.Frame(self.window, padding="10")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Model selection
+        ttk.Label(main_frame, text="Select Whisper Model:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.model_var = tk.StringVar(value=current_model)
+        model_combo = ttk.Combobox(main_frame, textvariable=self.model_var, values=self.models, state="readonly")
+        model_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        
+        # Model info
+        self.info_text = tk.Text(main_frame, height=8, width=40, wrap=tk.WORD)
+        self.info_text.grid(row=1, column=0, columnspan=2, pady=10)
+        self.update_model_info(self.current_model)
+        
+        # Bind model change
+        model_combo.bind('<<ComboboxSelected>>', lambda e: self.update_model_info(self.model_var.get()))
+        
+        # Save button
+        ttk.Button(main_frame, text="Save", command=self.save_settings).grid(row=2, column=0, columnspan=2, pady=10)
+
+    def update_model_info(self, model):
+        model_info = {
+            "tiny": "Smallest model, fastest but least accurate\nSize: ~75MB",
+            "base": "Good balance for simple transcription\nSize: ~150MB",
+            "small": "Better accuracy than base\nSize: ~500MB",
+            "medium": "Good accuracy for most cases\nSize: ~1.5GB",
+            "large": "High accuracy\nSize: ~3GB",
+            "large-v2": "Best accuracy, newest version\nSize: ~3GB"
+        }
+        self.info_text.delete(1.0, tk.END)
+        self.info_text.insert(tk.END, model_info.get(model, ""))
+
+    def save_settings(self):
+        new_model = self.model_var.get()
+        if new_model != self.current_model:
+            self.on_model_change(new_model)
+        self.window.destroy()
 
 class URLProcessorApp:
     def __init__(self, root):
@@ -15,12 +67,13 @@ class URLProcessorApp:
         self.temp_audio_file = None
         self.whisper_model = None
         
-        # Initialize whisper model
-        try:
-            self.whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
-            print("Whisper model loaded successfully")
-        except Exception as e:
-            print(f"Error loading whisper model: {str(e)}")
+        # Create models directory if it doesn't exist
+        self.models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+        os.makedirs(self.models_dir, exist_ok=True)
+        
+        # Load settings
+        self.settings_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+        self.settings = self.load_settings()
 
         # Create main frame
         main_frame = ttk.Frame(root, padding="10")
@@ -47,6 +100,58 @@ class URLProcessorApp:
         # Save Button
         self.save_button = ttk.Button(main_frame, text="Save to File", command=self.save_to_file)
         self.save_button.grid(row=4, column=0, columnspan=3, pady=10)
+
+        # Create menu
+        self.create_menu()
+        
+        # Initialize whisper model
+        self.load_model()
+
+    def create_menu(self):
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
+        
+        # Settings menu
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Settings", menu=settings_menu)
+        settings_menu.add_command(label="Model Settings", command=self.open_settings)
+        
+    def open_settings(self):
+        SettingsWindow(self.root, self.settings["model"], self.change_model)
+
+    def load_settings(self):
+        default_settings = {"model": "base"}
+        if os.path.exists(self.settings_file):
+            try:
+                with open(self.settings_file, 'r') as f:
+                    return json.load(f)
+            except:
+                return default_settings
+        return default_settings
+
+    def save_settings(self):
+        with open(self.settings_file, 'w') as f:
+            json.dump(self.settings, f)
+
+    def change_model(self, new_model):
+        self.settings["model"] = new_model
+        self.save_settings()
+        self.load_model()
+
+    def load_model(self):
+        try:
+            self.progress_label.config(text=f"Loading {self.settings['model']} model...")
+            self.root.update()  # Force update the GUI
+            self.whisper_model = WhisperModel(
+                self.settings["model"],
+                device="cpu",
+                compute_type="int8",
+                download_root=self.models_dir
+            )
+            self.progress_label.config(text=f"Model {self.settings['model']} loaded successfully")
+        except Exception as e:
+            print(f"Error loading whisper model: {str(e)}")
+            self.progress_label.config(text=f"Error loading model: {str(e)}")
 
     def process_url(self):
         url = self.url_entry.get()
@@ -95,7 +200,7 @@ class URLProcessorApp:
     def transcribe_audio(self):
         try:
             if not self.whisper_model:
-                self.whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+                self.load_model()
             
             self.progress_label.config(text="Transcribing audio... This might take a while...")
             
