@@ -1,5 +1,7 @@
 import yt_dlp
 import os
+import requests
+import json
 from faster_whisper import WhisperModel
 from utils import create_temp_audio_file, cleanup_temp_file
 
@@ -77,6 +79,30 @@ class TranscriptionManager:
             
         return self.temp_audio_file
 
+    def send_to_ollama(self, text):
+        try:
+            response = requests.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": "mistral:latest",
+                    "prompt": f"Stresć mi ten tekst: {text}"
+                },
+                stream=True
+            )
+            
+            if response.status_code == 200:
+                full_response = ""
+                for line in response.iter_lines():
+                    if line:
+                        json_response = json.loads(line)
+                        if 'response' in json_response:
+                            full_response += json_response['response']
+                return full_response
+            return None
+        except Exception as e:
+            print(f"Error sending to Ollama: {str(e)}")
+            return None
+
     def transcribe(self, progress_callback=None):
         try:
             if not self.whisper_model or not self.lang_detect_model:
@@ -127,7 +153,14 @@ class TranscriptionManager:
             if progress_callback:
                 progress_callback("Finalizing transcription...", 90)
             
-            return "\n".join(processed_text) if self.settings.get("show_timestamps", True) else " ".join(processed_text)
+            final_text = "\n".join(processed_text) if self.settings.get("show_timestamps", True) else " ".join(processed_text)
+            
+            # Send to Ollama for summarization
+            if progress_callback:
+                progress_callback("Sending to Ollama for summarization...", 95)
+            summary = self.send_to_ollama(final_text)
+            
+            return final_text, summary
             
         finally:
             cleanup_temp_file(self.temp_audio_file)

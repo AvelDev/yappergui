@@ -190,22 +190,40 @@ class URLProcessorApp:
             
             # Start transcription
             self.start_timer()
-            text = self.transcription_manager.transcribe(self.update_progress)
+            transcription, summary = self.transcription_manager.transcribe(self.update_progress)
             
             # Update GUI in the main thread
-            self.root.after(0, self.update_transcription_result, text)
+            self.root.after(0, self.update_transcription_result, transcription, summary)
             
         except Exception as e:
             self.root.after(0, self.show_transcription_error, str(e))
         finally:
             self.root.after(0, self.cleanup_after_transcription)
 
-    def update_transcription_result(self, text):
+    def update_transcription_result(self, transcription, summary):
+        """Update the result text area with transcription and summary"""
         self.result_text.delete(1.0, tk.END)
-        self.result_text.insert(tk.END, text)
-        self.update_progress("Transcription completed!", 100)
+        
+        # Add summary section
+        self.result_text.insert(tk.END, "=== PODSUMOWANIE ===\n\n")
+        if summary:
+            self.result_text.insert(tk.END, f"{summary}\n\n")
+        else:
+            self.result_text.insert(tk.END, "Nie udało się wygenerować podsumowania.\n\n")
+        
+        # Add transcription section
+        self.result_text.insert(tk.END, "=== PEŁNA TRANSKRYPCJA ===\n\n")
+        self.result_text.insert(tk.END, transcription)
+        
+        # Enable buttons
         self.process_button.config(state='normal')
         self.save_button.config(state='normal')
+        
+        # Stop the timer
+        self.stop_timer()
+        
+        # Update progress
+        self.update_progress("Transcription completed!", 100)
 
     def show_transcription_error(self, error_message):
         messagebox.showerror("Transcription Error", f"Failed to transcribe audio: {error_message}")
@@ -219,19 +237,20 @@ class URLProcessorApp:
         self.update_progress("", 0)
 
     def save_to_file(self):
-        result = self.result_text.get(1.0, tk.END).strip()
-        if result:
+        """Save transcription and summary to a file"""
+        if not self.result_text.get(1.0, tk.END).strip():
+            messagebox.showerror("Error", "No text to save")
+            return
+            
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+        )
+        
+        if file_path:
             try:
-                save_path = filedialog.asksaveasfilename(
-                    defaultextension=".txt",
-                    filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
-                )
-                
-                if save_path:
-                    with open(save_path, 'w', encoding='utf-8') as file:
-                        file.write(result)
-                    messagebox.showinfo("Success", "Transcription saved successfully!")
+                with open(file_path, 'w', encoding='utf-8') as file:
+                    file.write(self.result_text.get(1.0, tk.END))
+                messagebox.showinfo("Success", "File saved successfully")
             except Exception as e:
-                messagebox.showerror("Error", f"Failed to save file: {str(e)}")
-        else:
-            messagebox.showwarning("Warning", "No transcription to save")
+                messagebox.showerror("Error", f"Error saving file: {str(e)}")
