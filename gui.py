@@ -11,7 +11,7 @@ class URLProcessorApp:
     def __init__(self, root):
         self.root = root
         self.root.title("URL Processor")
-        self.root.geometry("600x400")
+        self.root.geometry("700x600")
         
         # Initialize variables
         self.transcription_start_time = None
@@ -38,22 +38,27 @@ class URLProcessorApp:
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # URL Entry
-        ttk.Label(main_frame, text="Enter URL:").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(main_frame, text="Youtube URL:").grid(row=0, column=0, sticky=tk.W)
         self.url_entry = ttk.Entry(main_frame, width=50)
         self.url_entry.grid(row=0, column=1, padx=5, pady=5)
 
         # Process Button
-        self.process_button = ttk.Button(main_frame, text="Process URL", command=self.process_url)
+        self.process_button = ttk.Button(main_frame, text="Podsumuj", command=self.process_url)
         self.process_button.grid(row=0, column=2, padx=5, pady=5)
 
-        # Result Text Area
-        ttk.Label(main_frame, text="Result:").grid(row=1, column=0, sticky=tk.W)
-        self.result_text = tk.Text(main_frame, height=10, width=60)
-        self.result_text.grid(row=2, column=0, columnspan=3, padx=5, pady=5)
+        # Transcription Text Area
+        ttk.Label(main_frame, text="Transkrypcja:").grid(row=1, column=0, sticky=tk.W)
+        self.transcription_text = tk.Text(main_frame, height=10, width=60)
+        self.transcription_text.grid(row=2, column=0, columnspan=3, padx=5, pady=5)
+
+        # Summary Text Area
+        ttk.Label(main_frame, text="Podsumowanie:").grid(row=3, column=0, sticky=tk.W)
+        self.summary_text = tk.Text(main_frame, height=10, width=60)
+        self.summary_text.grid(row=4, column=0, columnspan=3, padx=5, pady=5)
 
         # Progress Frame
         progress_frame = ttk.Frame(main_frame)
-        progress_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        progress_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
         
         # Timer Label
         self.timer_label = ttk.Label(progress_frame, text="")
@@ -74,8 +79,8 @@ class URLProcessorApp:
         self.progress_bar.pack(side=tk.TOP, fill=tk.X, padx=5)
 
         # Save Button
-        self.save_button = ttk.Button(main_frame, text="Save to File", command=self.save_to_file)
-        self.save_button.grid(row=4, column=0, columnspan=3, pady=10)
+        self.save_button = ttk.Button(main_frame, text="Zapisz do pliku", command=self.save_to_file)
+        self.save_button.grid(row=6, column=0, columnspan=3, pady=10)
 
         # Create menu
         self.create_menu()
@@ -167,7 +172,8 @@ class URLProcessorApp:
 
         self.process_button.config(state='disabled')
         self.save_button.config(state='disabled')
-        self.result_text.delete(1.0, tk.END)
+        self.transcription_text.delete(1.0, tk.END)
+        self.summary_text.delete(1.0, tk.END)
         self.progress_var.set(0)
         
         try:
@@ -202,18 +208,11 @@ class URLProcessorApp:
 
     def update_transcription_result(self, transcription, summary):
         """Update the result text area with transcription and summary"""
-        self.result_text.delete(1.0, tk.END)
+        self.transcription_text.delete(1.0, tk.END)
+        self.transcription_text.insert(tk.END, transcription)
         
-        # Add summary section
-        self.result_text.insert(tk.END, "=== PODSUMOWANIE ===\n\n")
-        if summary:
-            self.result_text.insert(tk.END, f"{summary}\n\n")
-        else:
-            self.result_text.insert(tk.END, "Nie udało się wygenerować podsumowania.\n\n")
-        
-        # Add transcription section
-        self.result_text.insert(tk.END, "=== PEŁNA TRANSKRYPCJA ===\n\n")
-        self.result_text.insert(tk.END, transcription)
+        self.summary_text.delete(1.0, tk.END)
+        self.summary_text.insert(tk.END, summary)
         
         # Enable buttons
         self.process_button.config(state='normal')
@@ -238,7 +237,7 @@ class URLProcessorApp:
 
     def save_to_file(self):
         """Save transcription and summary to a file"""
-        if not self.result_text.get(1.0, tk.END).strip():
+        if not self.transcription_text.get(1.0, tk.END).strip() and not self.summary_text.get(1.0, tk.END).strip():
             messagebox.showerror("Error", "No text to save")
             return
             
@@ -250,7 +249,9 @@ class URLProcessorApp:
         if file_path:
             try:
                 with open(file_path, 'w', encoding='utf-8') as file:
-                    file.write(self.result_text.get(1.0, tk.END))
+                    file.write(self.transcription_text.get(1.0, tk.END))
+                    file.write("\n\n")
+                    file.write(self.summary_text.get(1.0, tk.END))
                 messagebox.showinfo("Success", "File saved successfully")
             except Exception as e:
                 messagebox.showerror("Error", f"Error saving file: {str(e)}")
