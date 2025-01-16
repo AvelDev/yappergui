@@ -1,3 +1,7 @@
 yt_dlp>=2023.12.30
 faster-whisper>=0.10.0
 torch>=2.1.0
+requests>=2.31.0
+typing-extensions>=4.9.0
+numpy>=1.24.0
+tqdm>=4.66.1

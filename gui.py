@@ -1,11 +1,13 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, messagebox, filedialog
 import os
 import threading
 import time
-from settings import SettingsWindow, load_settings, save_settings_to_file
+from settings import SettingsWindow
 from utils import find_ffmpeg
 from transcription import TranscriptionManager
+from audio_processor import AudioProcessor
+from config import config
 
 class URLProcessorApp:
     def __init__(self, root):
@@ -18,15 +20,11 @@ class URLProcessorApp:
         self.timer_id = None
         
         # Create models directory if it doesn't exist
-        self.models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
-        os.makedirs(self.models_dir, exist_ok=True)
+        os.makedirs(config.models_dir, exist_ok=True)
         
-        # Load settings
-        self.settings_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
-        self.settings = load_settings(self.settings_file)
-        
-        # Initialize transcription manager
-        self.transcription_manager = TranscriptionManager(self.models_dir, self.settings)
+        # Initialize managers
+        self.transcription_manager = TranscriptionManager(config.models_dir, config.settings)
+        self.audio_processor = AudioProcessor(config.settings.get("ffmpeg_path"))
 
         self.setup_gui()
         self.check_ffmpeg()
@@ -94,11 +92,12 @@ class URLProcessorApp:
         settings_menu.add_command(label="Model Settings", command=self.open_settings)
 
     def check_ffmpeg(self):
-        if not self.settings.get("ffmpeg_path"):
+        if not config.settings.get("ffmpeg_path"):
             ffmpeg_path = find_ffmpeg()
             if ffmpeg_path:
-                self.settings["ffmpeg_path"] = ffmpeg_path
-                save_settings_to_file(self.settings_file, self.settings)
+                config.settings["ffmpeg_path"] = ffmpeg_path
+                config.save_settings(config.settings)
+                self.audio_processor = AudioProcessor(ffmpeg_path)
 
     def load_model(self):
         try:
@@ -108,12 +107,12 @@ class URLProcessorApp:
             self.update_progress(f"Error loading model: {str(e)}", 0)
 
     def open_settings(self):
-        SettingsWindow(self.root, self.settings, self.change_settings)
+        SettingsWindow(self.root, config.settings, self.change_settings)
 
     def change_settings(self, new_settings):
-        self.settings.update(new_settings)
-        save_settings_to_file(self.settings_file, self.settings)
-        self.transcription_manager.settings = self.settings
+        config.update_settings(new_settings)
+        self.transcription_manager.settings = config.settings
+        self.audio_processor = AudioProcessor(config.settings.get("ffmpeg_path"))
         self.load_model()
 
     def update_timer(self):
@@ -143,17 +142,6 @@ class URLProcessorApp:
             self.progress_var.set(progress)
         self.root.update()
 
-    def download_progress_hook(self, d):
-        """Progress hook for yt-dlp"""
-        if d['status'] == 'downloading':
-            total_bytes = d.get('total_bytes')
-            downloaded_bytes = d.get('downloaded_bytes', 0)
-            if total_bytes:
-                progress = (downloaded_bytes / total_bytes) * 50  # Use first 50% for download
-                self.update_progress(f"Downloading audio... {progress:.1f}%", progress)
-        elif d['status'] == 'finished':
-            self.update_progress("Download completed. Starting transcription...", 50)
-
     def process_url(self):
         url = self.url_entry.get().strip()
         if not url:
@@ -161,14 +149,14 @@ class URLProcessorApp:
             return
 
         # Check if FFmpeg is available
-        ffmpeg_path = self.settings.get("ffmpeg_path")
-        if not ffmpeg_path or not os.path.exists(ffmpeg_path):
+        if not config.settings.get("ffmpeg_path"):
             ffmpeg_path = find_ffmpeg()
             if not ffmpeg_path:
                 messagebox.showerror("Error", "FFmpeg not found. Please set FFmpeg path in settings.")
                 return
-            self.settings["ffmpeg_path"] = ffmpeg_path
-            save_settings_to_file(self.settings_file, self.settings)
+            config.settings["ffmpeg_path"] = ffmpeg_path
+            config.save_settings(config.settings)
+            self.audio_processor = AudioProcessor(ffmpeg_path)
 
         self.process_button.config(state='disabled')
         self.save_button.config(state='disabled')
@@ -180,7 +168,7 @@ class URLProcessorApp:
             # Download audio in a separate thread
             threading.Thread(
                 target=self.process_url_thread,
-                args=(url, ffmpeg_path),
+                args=(url,),
                 daemon=True
             ).start()
             
@@ -189,51 +177,60 @@ class URLProcessorApp:
             self.process_button.config(state='normal')
             self.save_button.config(state='normal')
 
-    def process_url_thread(self, url, ffmpeg_path):
+    def process_url_thread(self, url):
         try:
             # Download audio
-            self.transcription_manager.download_audio(url, ffmpeg_path, self.download_progress_hook)
+            self.update_progress("Downloading audio...", 10)
+            audio_file = self.audio_processor.download_audio(url, self.download_progress_hook)
+            
+            # Set the audio file in transcription manager
+            self.transcription_manager.temp_audio_file = audio_file
             
             # Start transcription
             self.start_timer()
             transcription, summary = self.transcription_manager.transcribe(self.update_progress)
             
-            # Update GUI in the main thread
-            self.root.after(0, self.update_transcription_result, transcription, summary)
+            # Update UI with results
+            self.root.after(0, self.update_results, transcription, summary)
             
         except Exception as e:
             self.root.after(0, self.show_transcription_error, str(e))
         finally:
-            self.root.after(0, self.cleanup_after_transcription)
+            self.root.after(0, self.cleanup)
+            if hasattr(self, 'audio_file') and self.audio_file:
+                self.audio_processor.cleanup(self.audio_file)
 
-    def update_transcription_result(self, transcription, summary):
-        """Update the result text area with transcription and summary"""
+    def download_progress_hook(self, d):
+        """Progress hook for yt-dlp"""
+        if d['status'] == 'downloading':
+            total_bytes = d.get('total_bytes')
+            downloaded_bytes = d.get('downloaded_bytes', 0)
+            if total_bytes:
+                progress = (downloaded_bytes / total_bytes) * 50  # Use first 50% for download
+                self.update_progress(f"Downloading audio... {progress:.1f}%", progress)
+        elif d['status'] == 'finished':
+            self.update_progress("Download completed. Starting transcription...", 50)
+
+    def update_results(self, transcription, summary):
+        """Update UI with transcription and summary results"""
         self.transcription_text.delete(1.0, tk.END)
         self.transcription_text.insert(tk.END, transcription)
-        
         self.summary_text.delete(1.0, tk.END)
         self.summary_text.insert(tk.END, summary)
-        
-        # Enable buttons
-        self.process_button.config(state='normal')
-        self.save_button.config(state='normal')
-        
-        # Stop the timer
-        self.stop_timer()
-        
-        # Update progress
-        self.update_progress("Transcription completed!", 100)
+        self.cleanup()
 
     def show_transcription_error(self, error_message):
-        messagebox.showerror("Transcription Error", f"Failed to transcribe audio: {error_message}")
-        self.update_progress("", 0)
+        """Show error message in UI"""
+        messagebox.showerror("Error", error_message)
+        self.cleanup()
+
+    def cleanup(self):
+        """Reset UI state after processing"""
         self.process_button.config(state='normal')
         self.save_button.config(state='normal')
-
-    def cleanup_after_transcription(self):
         self.stop_timer()
-        self.process_button.config(state=tk.NORMAL)
-        self.update_progress("", 0)
+        self.progress_var.set(0)
+        self.progress_label.config(text="")
 
     def save_to_file(self):
         """Save transcription and summary to a file"""

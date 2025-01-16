@@ -1,9 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, filedialog
 import torch
-import json
-import os
 from utils import find_ffmpeg
+from config import config
 
 class SettingsWindow:
     def __init__(self, parent, settings, on_settings_change):
@@ -96,32 +95,3 @@ class SettingsWindow:
         self.settings["ffmpeg_path"] = self.ffmpeg_path_var.get()
         self.settings["show_timestamps"] = self.show_timestamps_var.get()
         self.on_settings_change(self.settings)
-        self.window.destroy()
-
-def get_default_settings():
-    return {
-        "model": "base",
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
-        "ffmpeg_path": "",
-        "show_timestamps": True
-    }
-
-def load_settings(settings_file):
-    default_settings = get_default_settings()
-    try:
-        if os.path.exists(settings_file):
-            with open(settings_file, 'r') as f:
-                settings = json.load(f)
-                # Update with any missing default settings
-                for key, value in default_settings.items():
-                    if key not in settings:
-                        settings[key] = value
-                return settings
-        return default_settings
-    except Exception as e:
-        print(f"Error loading settings: {e}")
-        return default_settings
-
-def save_settings_to_file(settings_file, settings):
-    with open(settings_file, 'w') as f:
-        json.dump(settings, f)
