@@ -5,3 +5,4 @@ requests>=2.31.0
 typing-extensions>=4.9.0
 numpy>=1.24.0
 tqdm>=4.66.1
+flask>=2.0.0

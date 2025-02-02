@@ -12,57 +12,70 @@ class AudioDownloadError(AudioProcessingError):
     pass
 
 class AudioProcessor:
-    def __init__(self, ffmpeg_path: str):
+    def __init__(self, ffmpeg_path: Optional[str] = None):
         self.ffmpeg_path = ffmpeg_path
-        logger.info("AudioProcessor initialized with ffmpeg_path: %s", ffmpeg_path)
+        logger.info(f"AudioProcessor initialized with ffmpeg_path: {ffmpeg_path}")
         
     def download_audio(self, url: str, progress_hook: Optional[Callable] = None) -> str:
-        """Download audio from URL using yt-dlp
+        """
+        Download audio from URL and save to temporary file
         
         Args:
-            url: YouTube URL to download from
-            progress_hook: Optional callback for download progress
+            url: URL to download from
+            progress_hook: Optional callback function to report download progress
             
         Returns:
             str: Path to downloaded audio file
             
         Raises:
-            AudioDownloadError: If download fails
+            AudioDownloadError: If download fails or receives empty response
         """
-        temp_audio_file = create_temp_audio_file()
-        logger.info("Created temporary audio file: %s", temp_audio_file)
-        
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'wav',
-            }],
-            'ffmpeg_location': self.ffmpeg_path,
-            'outtmpl': temp_audio_file,
-            'progress_hooks': [progress_hook] if progress_hook else None,
-        }
-        
+        temp_file = create_temp_audio_file()
+        logger.info(f"Created temporary audio file: {temp_file}")
+        logger.info(f"Starting audio download from URL: {url}")
+
         try:
-            logger.info("Starting audio download from URL: %s", url)
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'wav',
+                }],
+                'outtmpl': temp_file,
+                'quiet': True,
+                'no_warnings': True,
+                'extract_audio': True,
+                'socket_timeout': 30,
+                'retries': 3,
+            }
+
+            if self.ffmpeg_path:
+                ydl_opts['ffmpeg_location'] = self.ffmpeg_path
+            
+            if progress_hook:
+                ydl_opts['progress_hooks'] = [progress_hook]
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-            
-            output_file = f"{temp_audio_file}.wav"
-            logger.info("Audio download completed: %s", output_file)
-            return output_file
-            
+                try:
+                    error_code = ydl.download([url])
+                    if error_code != 0:
+                        raise AudioDownloadError(f"yt-dlp returned error code: {error_code}")
+                except yt_dlp.utils.DownloadError as e:
+                    if "Empty reply from server" in str(e):
+                        raise AudioDownloadError("Otrzymano pustą odpowiedź z serwera. Spróbuj ponownie później.") from e
+                    raise AudioDownloadError(f"Błąd podczas pobierania: {str(e)}") from e
+
+            # Add .wav extension as yt-dlp automatically adds it
+            final_path = f"{temp_file}.wav"
+            logger.info(f"Audio downloaded successfully to: {final_path}")
+            return final_path
+
         except Exception as e:
             error_msg = f"Error downloading audio: {str(e)}"
             logger.error(error_msg, exc_info=True)
-            cleanup_temp_file(temp_audio_file)
+            cleanup_temp_file(temp_file)
             raise AudioDownloadError(error_msg) from e
             
-    def cleanup(self, audio_file: str) -> None:
-        """Clean up downloaded audio file
-        
-        Args:
-            audio_file: Path to audio file to clean up
-        """
-        logger.info("Cleaning up audio file: %s", audio_file)
-        cleanup_temp_file(audio_file)
+    def cleanup(self, file_path: str):
+        """Clean up temporary files"""
+        cleanup_temp_file(file_path)
