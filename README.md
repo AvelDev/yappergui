@@ -1,5 +1,7 @@
 # YapperGUI
 
+![YapperGUI Preview](docs/preview.png)
+
 YapperGUI is a powerful desktop application that transcribes YouTube videos and generates summaries using AI. It combines the power of OpenAI's Whisper model for transcription and Ollama's local LLM for summarization.
 
 ## Features
@@ -22,17 +24,20 @@ YapperGUI is a powerful desktop application that transcribes YouTube videos and 
 ## Installation
 
 1. Clone the repository:
+
 ```bash
 git clone https://github.com/yourusername/yappergui.git
 cd yappergui
 ```
 
 2. Install dependencies:
+
 ```bash
 pip install -r requirements.txt
 ```
 
 3. Install Ollama and the mistral model:
+
 ```bash
 # Install Ollama (macOS)
 curl https://ollama.ai/install.sh | sh
@@ -42,6 +47,7 @@ ollama pull mistral
 ```
 
 4. Run the application:
+
 ```bash
 python main.py
 ```
@@ -87,6 +93,7 @@ The application includes comprehensive error handling for common issues:
 ## Logging
 
 Logs are stored in the `logs` directory with the following format:
+
 - Daily log files: `yapper_YYYYMMDD.log`
 - Both console and file logging
 - Different log levels (DEBUG, INFO, ERROR)
