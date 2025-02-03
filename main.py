@@ -1,6 +1,8 @@
+import sys
+sys.path.append('src')
 import tkinter as tk
-from gui import URLProcessorApp
-from api import start_api
+from src.gui import URLProcessorApp
+from src.api import start_api
 import argparse
 
 def main():
