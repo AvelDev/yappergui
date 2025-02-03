@@ -1,6 +1,6 @@
 # YapperGUI
 
-![YapperGUI Preview](docs/preview.png)
+![YapperGUI Preview](preview.png)
 
 YapperGUI is a powerful desktop application that transcribes YouTube videos and generates summaries using AI. It combines the power of OpenAI's Whisper model for transcription and Ollama's local LLM for summarization.
 
