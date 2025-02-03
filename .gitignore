@@ -1,8 +1,8 @@
 .DS_Store
 
 logs
+models
 
-models/**/*
 settings.json
 
 # Byte-compiled / optimized / DLL files
@@ -176,3 +176,6 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+model/
+**/model/
